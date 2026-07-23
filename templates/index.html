@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>{{ request.app.title }}</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Calorie Tracker">
+<meta name="theme-color" content="#2563EB">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="app-container">
+  <header class="app-header">
+    <h1>&#127859; {{ request.app.title }}</h1>
+    <div class="user-info">
+      {% if user %}
+      <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">&#127769;</button>
+      <span class="user-info__name">{{ user.name }}</span>
+      <a href="/auth/logout" class="btn btn--outline btn--sm">Logout</a>
+      {% else %}
+      <a href="/auth/login" class="btn btn--primary">Sign in with Google</a>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if user %}
+  <!-- Connection Bar -->
+  <div class="conn-bar" id="connectionBar">
+    <div class="conn-dot" id="statusDot" style="background:{{ '#34a853' if connection.connected else '#ea4335' }}"></div>
+    <div class="conn-text">
+      <span id="statusText">
+        {% if connection.connected %}
+        Connected &middot; nutrition r/w + activity r
+        {% else %}
+        Disconnected (HTTP {{ connection.status_code }})
+        {% endif %}
+      </span>
+    </div>
+    <button class="conn-btn" onclick="testConnection()">&#128260; Test</button>
+    {% if connection.status_code in (401, 403) %}
+    <a href="/auth/logout" class="btn btn--danger btn--sm" style="font-size:10px">Re-auth</a>
+    {% endif %}
+  </div>
+
+  <!-- Dashboard -->
+  <div class="card" style="padding-bottom:var(--space-4)">
+    <div class="card__title"><span class="emoji">&#128200;</span> {{ current_date }}</div>
+
+    <!-- Date Navigation -->
+    <div class="date-nav" id="dateNav">
+      <button class="date-nav__btn" id="dateNavPrev">&larr;</button>
+      <span class="date-nav__label" id="dateNavLabel">{% if is_today %}Today{% else %}{{ current_date }}{% endif %}</span>
+      <button class="date-nav__btn" id="dateNavNext"{% if not next_date %} disabled{% endif %}>&rarr;</button>
+      <button class="date-nav__today" id="dateNavToday"{% if is_today %} style="display:none"{% endif %}>Today</button>
+    </div>
+
+    {% set net = daily.calories_consumed - daily.calories_burned %}
+    <div class="dash-row">
+      <div class="metric-card metric-card--eaten">
+        <div class="metric-card__value" id="caloriesEaten">{{ "%.0f"|format(daily.calories_consumed) }}</div>
+        <div class="metric-card__label">&#127869; Eaten</div>
+      </div>
+      <div class="metric-card metric-card--burned">
+        <div class="metric-card__value" id="caloriesBurned">{{ "%.0f"|format(daily.calories_burned) }}</div>
+        <div class="metric-card__label">&#128170; Burned</div>
+      </div>
+      <div class="metric-card metric-card--net">
+        <div class="metric-card__value" id="netCalories">{{ "%.0f"|format(net) }}</div>
+        <div class="metric-card__label">&#9878; Net</div>
+      </div>
+      <div class="macro-section" id="macroSection"{% if not (daily.macros and (daily.macros.protein_g or daily.macros.fat_g or daily.macros.carbs_g)) %} style="display:none"{% endif %}>
+        {% if daily.macros and (daily.macros.protein_g or daily.macros.fat_g or daily.macros.carbs_g) %}
+        {% set pdeg = daily.macros.protein_pct * 3.6 %}
+        {% set fdeg = daily.macros.fat_pct * 3.6 %}
+        {% set cdeg = daily.macros.carbs_pct * 3.6 %}
+        <div class="macro-pie" id="macroPie" style="background:conic-gradient(#34D399 0deg, #34D399 {{ pdeg }}deg, #F59E0B {{ pdeg }}deg, #F59E0B {{ pdeg + fdeg }}deg, #60A5FA {{ pdeg + fdeg }}deg, #60A5FA 360deg)"></div>
+        {% else %}
+        <div class="macro-pie" id="macroPie"></div>
+        {% endif %}
+        <div class="macro-details">
+          <div><span class="macro-dot" style="background:#34D399"></span><span class="value">P</span> <span id="macroP">{{ "%.0f"|format(daily.macros.protein_g) if daily.macros else "0" }}</span>g</div>
+          <div><span class="macro-dot" style="background:#F59E0B"></span><span class="value">F</span> <span id="macroF">{{ "%.0f"|format(daily.macros.fat_g) if daily.macros else "0" }}</span>g</div>
+          <div><span class="macro-dot" style="background:#60A5FA"></span><span class="value">C</span> <span id="macroC">{{ "%.0f"|format(daily.macros.carbs_g) if daily.macros else "0" }}</span>g</div>
+        </div>
+      </div>
+    </div>
+    <div class="status-row">
+      {% if net < -50 %}
+      <span class="badge badge--deficit">&#128200; {{ "%.0f"|format(net|abs) }} kcal deficit</span>
+      {% elif net > 50 %}
+      <span class="badge badge--surplus">&#9888; {{ "%.0f"|format(net) }} kcal surplus</span>
+      {% else %}
+      <span class="badge badge--maintenance">&#9989; Maintenance</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Log a Meal -->
+  <div class="card">
+    <div class="card__title"><span class="emoji">&#128247;</span> Log a Meal</div>
+
+    <div class="upload-zone" id="uploadZone">
+      <span class="upload-icon">&#128247;</span>
+      <div class="upload-title">Upload a food photo</div>
+      <div class="upload-subtitle">Gemini AI identifies food &amp; estimates macros</div>
+      <input type="file" id="fileInput" accept="image/*" capture="environment">
+    </div>
+
+    <!-- Skeleton loader (shown during analysis) -->
+    <div id="loadingIndicator" class="loading hidden">
+      <div class="skeleton skeleton-block" style="margin-bottom:var(--space-3)"></div>
+      <div class="skeleton skeleton-text"></div>
+      <div class="skeleton skeleton-text" style="width:40%"></div>
+      <p style="margin-top:var(--space-3);font-size:var(--font-size-sm);color:var(--color-text-tertiary)">&#9203; Gemini is analyzing your meal...</p>
+    </div>
+
+    <!-- Review & Edit -->
+    <div id="resultContainer" class="hidden">
+      <div class="review-box">
+        <div class="review-header">
+          <span class="review-header__name" id="foodName"></span>
+          <span class="review-header__cals" id="caloriesDisplay"></span>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group" style="flex:2">
+            <label>Food</label>
+            <input type="text" id="editFoodName">
+          </div>
+          <div class="form-group" style="flex:1">
+            <label>Calories</label>
+            <input type="number" id="editCalories" step="0.1">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Protein (g)</label>
+            <input type="number" id="editProtein" step="0.1">
+          </div>
+          <div class="form-group">
+            <label>Fat (g)</label>
+            <input type="number" id="editFat" step="0.1">
+          </div>
+          <div class="form-group">
+            <label>Carbs (g)</label>
+            <input type="number" id="editCarbs" step="0.1">
+          </div>
+          <div class="form-group" style="max-width:70px">
+            <label>Portion</label>
+            <input type="number" id="editPortion" step="0.1">
+          </div>
+          <div class="form-group" style="max-width:90px">
+            <label>Type</label>
+            <select id="editMealType">
+              <option value="breakfast">Bfast</option>
+              <option value="lunch" selected>Lunch</option>
+              <option value="dinner">Dinner</option>
+              <option value="snack">Snack</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="note-area">
+          <div style="display:flex;align-items:center;gap:var(--space-2)">
+            <label>&#128221; Hidden Ingredients</label>
+            <button class="voice-btn" id="voiceBtn" title="Voice input">&#127908;</button>
+          </div>
+          <p style="font-size:var(--font-size-xs);color:var(--color-text-tertiary);margin-top:var(--space-1)">Cooking methods, sauces, oils</p>
+          <textarea id="editTextNote" rows="1" placeholder="e.g., cooked in olive oil, with butter sauce..."></textarea>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn--accent" id="confirmBtn" style="flex:1">&#10003; Log to Google Health</button>
+          <button class="btn btn--danger" id="resetBtn">&#8634; Retake</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Success Message -->
+    <div id="successMessage" class="hidden success-message">
+      <div class="success-icon">&#10003;</div>
+      <div class="success-title">Logged to Google Health!</div>
+    </div>
+  </div>
+
+  <!-- Nutrition History -->
+  <div class="card">
+    <div class="card__title"><span class="emoji">&#128196;</span> History <span style="font-weight:400;color:var(--color-text-tertiary);font-size:var(--font-size-xs);">today</span></div>
+    <div id="historyContent">
+    {% if history %}
+    <div class="history-list">
+    {% for entry in history %}
+    <div class="history-item">
+      <div>
+        <div class="history-item__food">{{ entry["values"]["food_item"]["stringValue"] }}</div>
+        <div class="history-item__meta">{{ entry["values"]["meal_type"]["stringValue"] }}{% if entry["values"].get("notes") %} &middot; {{ entry["values"]["notes"]["stringValue"] }}{% endif %}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:var(--space-2)">
+        <span class="history-item__cals">{{ "%.0f"|format(entry["values"]["calories"]["fp64Value"]) }}</span>
+        <button class="delete-btn" data-name="{{ entry['name'] }}" title="Delete">&#10005;</button>
+      </div>
+    </div>
+    {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="empty-icon">&#127869;</div>
+      <div class="empty-text">No meals logged today. Take a photo above!</div>
+    </div>
+    {% endif %}
+    </div>
+  </div>
+
+  <!-- Weekly Trend Chart -->
+  <div class="card">
+    <div class="card__title"><span class="emoji">&#128202;</span> 7-Day Trend</div>
+    <div class="chart-container">
+      <canvas id="weeklyChart" width="600" height="200"></canvas>
+    </div>
+    <div class="chart-legend">
+      <div class="chart-legend__item"><span class="chart-legend__dot" style="background:#10B981"></span> Eaten</div>
+      <div class="chart-legend__item"><span class="chart-legend__dot" style="background:#3B82F6"></span> Burned</div>
+      <div class="chart-legend__item"><span class="chart-legend__dot" style="background:#F59E0B"></span> Net</div>
+    </div>
+    <div style="text-align:center;margin-top:var(--space-2)">
+      <span class="badge badge--deficit" id="weeklyAvgBadge"></span>
+    </div>
+  </div>
+
+  {% else %}
+  <!-- Landing -->
+  <div class="card landing">
+    <span class="landing-icon">&#127859;</span>
+    <h2>Track Your Calories with AI</h2>
+    <p>Snap a photo &mdash; Gemini AI identifies food and estimates calories &amp; macros.<br>
+    Add context notes for hidden ingredients. Syncs to Google Health API v4, compares against Fitbit Air activity.</p>
+    <a href="/auth/login" class="btn btn--primary btn--lg">Sign in with Google</a>
+    <div class="scopes">Scopes: nutrition.rw, activity_and_fitness.r</div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+{% if user %}
+// --- DOM refs ---
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+const loadingIndicator = document.getElementById('loadingIndicator');
+const resultContainer = document.getElementById('resultContainer');
+const successMessage = document.getElementById('successMessage');
+const voiceBtn = document.getElementById('voiceBtn');
+let currentAnalysis = null;
+
+// --- Date Navigation (instant, no page reload) ---
+const dayCache = {};
+let currentDate = '{{ current_date }}';
+const todayStr = new Date().toISOString().slice(0, 10);
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+async function fetchAndUpdateDay(dateStr) {
+  try {
+    const resp = await fetch('/api/day/' + dateStr);
+    const data = await resp.json();
+    dayCache[dateStr] = data;
+    return data;
+  } catch (e) { console.error('Failed to fetch day', e); return null; }
+}
+
+function showDate(dateStr) {
+  if (dateStr > todayStr) return;
+  if (dayCache[dateStr]) { updateDay(dayCache[dateStr], dateStr); }
+  else { fetchAndUpdateDay(dateStr).then(d => { if (d) updateDay(d, dateStr); }); }
+  preloadNearby(dateStr);
+}
+
+function preloadNearby(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  [-2, -1, 1, 2].forEach(offset => {
+    const dt = new Date(d); dt.setDate(dt.getDate() + offset);
+    const key = dt.toISOString().slice(0, 10);
+    if (!dayCache[key] && key <= todayStr) fetchAndUpdateDay(key);
+  });
+}
+
+function updateDay(data, dateStr) {
+  const d = data.daily;
+  const net = d.calories_consumed - d.calories_burned;
+  currentDate = dateStr;
+
+  // Metric cards
+  document.getElementById('caloriesEaten').textContent = Math.round(d.calories_consumed);
+  document.getElementById('caloriesBurned').textContent = Math.round(d.calories_burned);
+  document.getElementById('netCalories').textContent = Math.round(net);
+
+  // Date nav
+  document.getElementById('dateNavLabel').textContent = dateStr === todayStr ? 'Today' : formatDate(dateStr);
+  document.getElementById('dateNavNext').disabled = dateStr >= todayStr;
+  document.getElementById('dateNavToday').style.display = dateStr === todayStr ? 'none' : '';
+
+  // Badge
+  const badge = document.querySelector('.status-row .badge');
+  if (badge) {
+    if (net < -50) { badge.className = 'badge badge--deficit'; badge.innerHTML = '\uD83D\uDCC8 ' + Math.abs(Math.round(net)) + ' kcal deficit'; }
+    else if (net > 50) { badge.className = 'badge badge--surplus'; badge.innerHTML = '\u26A0\uFE0F ' + Math.round(net) + ' kcal surplus'; }
+    else { badge.className = 'badge badge--maintenance'; badge.innerHTML = '\u2705 Maintenance'; }
+  }
+
+  // Macro section
+  const ms = document.getElementById('macroSection');
+  const macros = d.macros;
+  if (macros && (macros.protein_g || macros.fat_g || macros.carbs_g)) {
+    const pdeg = macros.protein_pct * 3.6;
+    const fdeg = macros.fat_pct * 3.6;
+    document.getElementById('macroPie').style.background = 'conic-gradient(#34D399 0deg, #34D399 ' + pdeg + 'deg, #F59E0B ' + pdeg + 'deg, #F59E0B ' + (pdeg + fdeg) + 'deg, #60A5FA ' + (pdeg + fdeg) + 'deg, #60A5FA 360deg)';
+    document.getElementById('macroP').textContent = Math.round(macros.protein_g);
+    document.getElementById('macroF').textContent = Math.round(macros.fat_g);
+    document.getElementById('macroC').textContent = Math.round(macros.carbs_g);
+    ms.style.display = '';
+  } else {
+    ms.style.display = 'none';
+  }
+
+  // History
+  const hc = document.getElementById('historyContent');
+  const history = data.history || [];
+  if (history.length) {
+    hc.innerHTML = '<div class="history-list">' + history.map(e =>
+      '<div class="history-item"><div><div class="history-item__food">' + esc(e.values.food_item.stringValue) + '</div><div class="history-item__meta">' + esc(e.values.meal_type.stringValue) + (e.values.notes ? ' &middot; ' + esc(e.values.notes.stringValue) : '') + '</div></div><div style="display:flex;align-items:center;gap:var(--space-2)"><span class="history-item__cals">' + Math.round(e.values.calories.fp64Value) + '</span><button class="delete-btn" data-name="' + esc(e.name) + '" title="Delete">\u2715</button></div></div>'
+    ).join('') + '</div>';
+  } else {
+    hc.innerHTML = '<div class="empty-state"><div class="empty-icon">\uD83C\uDF7D\uFE0F</div><div class="empty-text">No meals logged this day.</div></div>';
+  }
+
+  // Update URL without reload
+  const url = dateStr === todayStr ? '/' : '/?date=' + dateStr;
+  history.pushState({ date: dateStr }, '', url);
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+// Wire up nav
+document.getElementById('dateNavPrev').addEventListener('click', () => {
+  const d = new Date(currentDate + 'T12:00:00'); d.setDate(d.getDate() - 1);
+  showDate(d.toISOString().slice(0, 10));
+});
+document.getElementById('dateNavNext').addEventListener('click', () => {
+  const d = new Date(currentDate + 'T12:00:00'); d.setDate(d.getDate() + 1);
+  showDate(d.toISOString().slice(0, 10));
+});
+document.getElementById('dateNavToday').addEventListener('click', () => showDate(todayStr));
+
+// Handle browser back/forward
+window.addEventListener('popstate', (e) => {
+  if (e.state && e.state.date) showDate(e.state.date);
+});
+
+// Preload nearby days eagerly
+preloadNearby(currentDate);
+
+// --- Dark Mode ---
+const themeToggle = document.getElementById('themeToggle');
+const savedTheme = localStorage.getItem('theme') || 'light';
+document.documentElement.setAttribute('data-theme', savedTheme);
+themeToggle.textContent = savedTheme === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19';
+themeToggle.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  const next = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  themeToggle.textContent = next === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19';
+  redrawChart();
+});
+
+// --- Upload ---
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', (e) => { e.preventDefault(); uploadZone.classList.remove('dragover'); if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+async function handleFile(file) {
+  if (!file.type.startsWith('image/')) return;
+  successMessage.classList.add('hidden');
+  resultContainer.classList.add('hidden');
+  uploadZone.classList.add('hidden');
+  loadingIndicator.classList.remove('hidden');
+  const textNote = document.getElementById('editTextNote').value || '';
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('text_note', textNote);
+  try {
+    const resp = await fetch('/api/analyze', { method: 'POST', body: formData });
+    const data = await resp.json();
+    displayResult(data);
+  } catch (err) {
+    loadingIndicator.innerHTML = '<div style="text-align:center;padding:var(--space-6)"><p style="color:var(--color-danger)">\u26A0\uFE0F Analysis failed. Try again.</p></div>';
+  }
+}
+
+function displayResult(data) {
+  currentAnalysis = data;
+  loadingIndicator.classList.add('hidden');
+  resultContainer.classList.remove('hidden');
+  successMessage.classList.add('hidden');
+  document.getElementById('foodName').textContent = data.food_name;
+  document.getElementById('caloriesDisplay').textContent = Math.round(data.calories) + ' kcal';
+  document.getElementById('editFoodName').value = data.food_name;
+  document.getElementById('editCalories').value = data.calories;
+  document.getElementById('editProtein').value = data.protein_g;
+  document.getElementById('editFat').value = data.fat_g;
+  document.getElementById('editCarbs').value = data.carbs_g;
+  document.getElementById('editPortion').value = data.portion_grams || 100;
+  document.getElementById('confirmBtn').onclick = logMeal;
+  document.getElementById('resetBtn').onclick = resetForm;
+}
+
+async function logMeal() {
+  const payload = {
+    food_name: document.getElementById('editFoodName').value,
+    calories: parseFloat(document.getElementById('editCalories').value) || 0,
+    protein_g: parseFloat(document.getElementById('editProtein').value) || 0,
+    fat_g: parseFloat(document.getElementById('editFat').value) || 0,
+    carbs_g: parseFloat(document.getElementById('editCarbs').value) || 0,
+    meal_type: document.getElementById('editMealType').value,
+    portion_grams: parseFloat(document.getElementById('editPortion').value) || null,
+    text_note: document.getElementById('editTextNote').value || '',
+  };
+  const btn = document.getElementById('confirmBtn');
+  btn.textContent = 'Saving...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/log-meal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    await resp.json();
+    resultContainer.classList.add('hidden');
+    successMessage.classList.remove('hidden');
+    // Refresh today without page reload
+    delete dayCache[todayStr];
+    setTimeout(() => { showDate(todayStr); }, 2000);
+  } catch (err) {
+    btn.textContent = 'Error - Try Again';
+    btn.disabled = false;
+  }
+}
+
+function resetForm() {
+  currentAnalysis = null;
+  resultContainer.classList.add('hidden');
+  uploadZone.classList.remove('hidden');
+  fileInput.value = '';
+}
+
+async function testConnection() {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  text.innerHTML = '\u23F3 Testing...';
+  dot.style.background = '#fbbc04';
+  try {
+    const resp = await fetch('/api/connection-status');
+    const data = await resp.json();
+    if (data.connected) {
+      dot.style.background = '#34a853';
+      text.innerHTML = 'Connected &middot; nutrition r/w + activity r';
+    } else {
+      dot.style.background = '#ea4335';
+      text.innerHTML = 'Disconnected \u2014 HTTP ' + data.status_code;
+    }
+  } catch (err) {
+    dot.style.background = '#ea4335';
+    text.innerHTML = '\u26A0\uFE0F Test failed';
+  }
+}
+
+// --- Voice Input ---
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.continuous = false;
+  recognition.onresult = function(event) {
+    const transcript = event.results[0][0].transcript;
+    const textarea = document.getElementById('editTextNote');
+    textarea.value = textarea.value ? textarea.value + ', ' + transcript : transcript;
+    voiceBtn.classList.remove('listening');
+    voiceBtn.textContent = '\uD83C\uDFA4';
+  };
+  recognition.onerror = function() { voiceBtn.classList.remove('listening'); voiceBtn.textContent = '\uD83C\uDFA4'; };
+  recognition.onend = function() { voiceBtn.classList.remove('listening'); voiceBtn.textContent = '\uD83C\uDFA4'; };
+  voiceBtn.addEventListener('click', function() {
+    if (voiceBtn.classList.contains('listening')) { recognition.stop(); voiceBtn.classList.remove('listening'); voiceBtn.textContent = '\uD83C\uDFA4'; }
+    else { recognition.start(); voiceBtn.classList.add('listening'); voiceBtn.textContent = '\uD83D\uDD0A'; }
+  });
+} else {
+  voiceBtn.title = 'Voice not supported';
+  voiceBtn.style.opacity = '0.4';
+}
+
+// --- Delete (delegated) ---
+document.getElementById('historyContent').addEventListener('click', async function(e) {
+  const btn = e.target.closest('.delete-btn');
+  if (!btn) return;
+  if (!confirm('Delete this entry?')) return;
+  const name = btn.dataset.name;
+  const resp = await fetch('/api/history/' + encodeURIComponent(name), { method: 'DELETE' });
+  const data = await resp.json();
+  if (data.deleted) {
+    delete dayCache[currentDate];
+    showDate(currentDate);
+  } else {
+    alert('Failed to delete');
+  }
+});
+
+// --- Weekly Chart ---
+let chartData = null;
+async function loadChart() {
+  const canvas = document.getElementById('weeklyChart');
+  const container = canvas?.parentElement;
+  const legend = container?.nextElementSibling;
+  const badge = document.getElementById('weeklyAvgBadge');
+  try {
+    const resp = await fetch('/api/weekly');
+    chartData = await resp.json();
+    const hasData = chartData.some(d => d.calories_consumed > 0);
+    if (hasData) {
+      canvas.style.display = '';
+      if (legend) legend.style.display = '';
+      if (badge) badge.style.display = '';
+      drawChart(chartData);
+    } else {
+      canvas.style.display = 'none';
+      if (legend) legend.style.display = 'none';
+      if (badge) badge.style.display = 'none';
+      // show empty state inside container
+      if (!container.querySelector('.chart-empty')) {
+        const empty = document.createElement('div');
+        empty.className = 'chart-empty';
+        empty.textContent = 'Log meals throughout the week to see your trend here';
+        container.appendChild(empty);
+      }
+    }
+  } catch (e) { /* chart stays hidden */ }
+}
+
+function drawChart(data, animate = true) {
+  const canvas = document.getElementById('weeklyChart');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const W = rect.width;
+  const H = rect.height;
+  const pad = { top: 16, bottom: 28, left: 40, right: 16 };
+  const chartW = W - pad.left - pad.right;
+  const chartH = H - pad.top - pad.bottom;
+  const maxVal = Math.max(1, ...data.map(d => Math.max(d.calories_consumed, d.calories_burned, Math.abs(d.net))));
+  const yMax = Math.ceil(maxVal / 200) * 200 || 200;
+  const theme = document.documentElement.getAttribute('data-theme') || 'light';
+  const textColor = theme === 'dark' ? '#94A3B8' : '#6B7280';
+  const gridColor = theme === 'dark' ? '#334155' : '#E5E7EB';
+  const series = [
+    { key: 'calories_consumed', color: '#10B981', width: 2.5 },
+    { key: 'calories_burned', color: '#3B82F6', width: 2.5 },
+    { key: 'net', color: '#F59E0B', width: 2, dash: [4, 3] },
+  ];
+
+  function yPos(val) { return pad.top + chartH - (val / yMax) * chartH; }
+  function xPos(i) { return pad.left + (i / 6) * chartW; }
+
+  function renderAt(progress) {
+    ctx.clearRect(0, 0, W, H);
+    // Grid (always full)
+    ctx.strokeStyle = gridColor; ctx.lineWidth = 1;
+    for (let v = 0; v <= yMax; v += yMax / 4) {
+      const y = yPos(v);
+      ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+      ctx.fillStyle = textColor; ctx.font = '10px Inter, sans-serif'; ctx.textAlign = 'right';
+      ctx.fillText(Math.round(v), pad.left - 6, y + 3);
+    }
+    // X labels (always full)
+    ctx.fillStyle = textColor; ctx.font = '11px Inter, sans-serif'; ctx.textAlign = 'center';
+    data.forEach((d, i) => { ctx.fillText(d.day, xPos(i), H - 4); });
+    // Clip lines to progress
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(pad.left, pad.top, chartW * progress, chartH);
+    ctx.clip();
+    series.forEach(s => {
+      const vals = data.map(d => d[s.key]);
+      ctx.strokeStyle = s.color; ctx.lineWidth = s.width;
+      ctx.setLineDash(s.dash || []); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath();
+      vals.forEach((v, i) => {
+        const x = xPos(i); const y = yPos(Math.max(v, s.key === 'net' ? -yMax : 0));
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    });
+    ctx.restore();
+    // Dots (only if dot's X is within progress)
+    data.forEach((d, i) => {
+      if (d.calories_consumed <= 0) return;
+      const x = xPos(i);
+      if (x > pad.left + chartW * progress + 6) return;
+      const y = yPos(d.calories_consumed);
+      ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#10B981'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    });
+  }
+
+  const duration = animate ? 600 : 0;
+  const startTime = performance.now();
+  function frame(now) {
+    const elapsed = now - startTime;
+    const t = duration > 0 ? Math.min(elapsed / duration, 1) : 1;
+    const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+    renderAt(eased);
+    if (t < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Badge (always full)
+  const avgNet = data.reduce((s, d) => s + d.net, 0) / 7;
+  const badge = document.getElementById('weeklyAvgBadge');
+  if (badge) {
+    const abs = Math.abs(Math.round(avgNet));
+    if (avgNet < -50) badge.textContent = '\uD83D\uDCC8 Avg ' + abs + ' kcal deficit';
+    else if (avgNet > 50) badge.textContent = '\uD83D\uDCC8 Avg ' + abs + ' kcal surplus';
+    else badge.textContent = '\uD83D\uDCC8 Avg maintenance';
+  }
+}
+
+function redrawChart() { if (chartData) drawChart(chartData, false); }
+
+loadChart();
+
+// Redraw on resize
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(redrawChart, 200);
+});
+
+{% endif %}
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/service-worker.js');
+}
+</script>
+</body>
+</html>
