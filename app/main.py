@@ -21,7 +21,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def service_worker():
     return FileResponse("static/service-worker.js", media_type="application/javascript")
 
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory="templates", cache_size=0)
 
 STATE_STORE = {}
 
