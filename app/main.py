@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
 import app.auth as auth
 
 import app.gemini_client as gemini
@@ -21,7 +22,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 async def service_worker():
     return FileResponse("static/service-worker.js", media_type="application/javascript")
 
-templates = Jinja2Templates(directory="templates", cache_size=0)
+_jinja_env = Environment(loader=FileSystemLoader("templates"), cache_size=0)
+templates = Jinja2Templates(env=_jinja_env)
 
 STATE_STORE = {}
 
