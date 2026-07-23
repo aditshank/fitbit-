@@ -5,6 +5,22 @@ from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
+
+class _SafeEnv(Environment):
+    def _load_template(self, name, globals=None):
+        if self.loader is None:
+            raise TypeError("no loader for this environment specified")
+        cache_key = name
+        template = self.cache.get(cache_key)
+        if template is not None and (not self.auto_reload or template.is_up_to_date):
+            return template
+        template = self.loader.load(self, name, self.make_globals(globals))
+        self.cache[cache_key] = template
+        return template
+
+_jinja_env = _SafeEnv(loader=FileSystemLoader("templates"), cache_size=0)
+templates = Jinja2Templates(env=_jinja_env)
 import app.auth as auth
 
 import app.gemini_client as gemini
